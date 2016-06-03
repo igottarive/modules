@@ -1,0 +1,33 @@
+/* Override Ctools modal Css */
+div.ctools-modal-content {
+	border: 3px solid #006f12!important;
+	border-radius: 10px;
+}
+.modal-content {
+	border-radius: 0 0 10px 10px;
+}
+.modal-content h2 {
+	font-size: 1.5em;
+	color: #006f12;
+	text-align: center;
+}
+.modal-content img {
+	float: left;
+	max-width: 60%;
+	margin-right: .75%;
+	height: auto;
+}
+.modal-header {
+	background-color: #006f12 !important;
+	border-radius: 0 0 10px 10px;
+}
+
+/* Hide if is empty*/
+.block-igd-partner-coupon-pricing.empty {
+  display: none;
+}
+
+/* Hide the close button */
+.modal-header .close {
+  display: none;
+}

@@ -1,0 +1,16 @@
+name = IGD Auto Coupons
+description = IGD automatically apply coupons when visiting a partner
+package = IGD-Other
+version = 7.x-1.0
+project = igd-auto-coupon
+core = 7.x
+
+dependencies[] = commerce_coupon
+dependencies[] = commerce_coupon_per_user
+
+; Information added by drupal.org packaging script on 2012-12-31
+version = "7.x-1.0"
+core = "7.x"
+project = "IGD Auto Coupon"
+datestamp = "1356957860"
+

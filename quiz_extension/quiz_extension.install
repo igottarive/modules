@@ -1,0 +1,58 @@
+<?php
+
+/*
+ * @file
+ * Install, and schema functions
+ */
+
+/*
+ * Implements hook_schema().
+ */
+
+function quiz_extension_schema() {
+  $schema['users_token'] = array(
+    'description' => 'The table to save user tokens per term.',
+    'fields' => array(
+      'utid' => array(
+        'description' => 'User token id.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'uid' => array(
+        'description' => 'User id.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'tid' => array(
+        'description' => 'Term id.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'total_tokens' => array(
+        'description' => 'Number of tokens for specific term.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'used_tokens' => array(
+        'description' => 'Number of used tokens for specific term.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array(
+      'uid' => array('uid'),
+      'tid' => array('tid'),
+    ),
+    'primary key' => array('utid'),
+  );
+  return $schema;
+}

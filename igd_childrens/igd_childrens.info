@@ -1,0 +1,13 @@
+name = IGD Childrens Hospital Coupon
+description = "A block for displaying how much we donate to children's hospital"
+dependencies[] = commerce_coupon
+dependencies[] = number
+package = IGD
+core = 7.x
+
+; Information added by drupal.org packaging script on 2013-03-12
+version = "7.x-1.0"
+core = "7.x"
+project = "igd_childrens"
+datestamp = "1363086312"
+

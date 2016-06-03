@@ -1,0 +1,3 @@
+jQuery(function() {
+  jQuery("#ajax-target").load("igd_partner_coupon_pricing/updated_pricing/" + jQuery(this).attr('sku'));
+});

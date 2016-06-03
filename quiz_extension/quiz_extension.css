@@ -1,0 +1,40 @@
+.ui-mini {
+  padding: initial !important;
+}
+
+.ui-table tbody th,
+.ui-table tbody td {
+  vertical-align: initial;
+}
+
+/* The failed/passed result */
+.quiz-result {
+  padding: 3px;
+}
+
+/* Progress bar label */
+.progressbar {
+  height: 21px;;
+  width: 171px;
+}
+
+.progress-label {
+  position:absolute; 
+  margin-left:15px;
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.quiz-inprogress {
+  background-color: #5B5B5B;
+  color: #CECECE;
+}
+
+.rightside {
+  position: absolute !important;
+  right: 10px;
+  top: 45px;
+  font-size: 1em !important;
+  margin: 0 !important;
+  padding: 7px 7px 7px 35px !important;
+}

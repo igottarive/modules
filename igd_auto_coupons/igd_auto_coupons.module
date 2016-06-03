@@ -1,0 +1,71 @@
+<?php
+/**
+ * @file
+ * IGD Automatic Coupon module
+ * This will automatically apply the affiliates coupon to the order for a user when they visit the cart page
+ */
+
+/*
+ * Implements hook_menu_alter().
+ */
+function igd_auto_coupons_menu_alter(&$items) {
+  //Make taxonomies try to add coupons to the session
+  $items['taxonomy/term/%taxonomy_term']['page callback'] = 'igd_auto_coupons_taxonomy_page_callback';
+}
+
+
+/*
+ * Callback for getting content
+ * Load and return the term page
+ */
+function igd_auto_coupons_taxonomy_page_callback($term) {
+  //If not set, set the coupon code for a user
+  if($term->vocabulary_machine_name == "partners") {
+    if(isset($term->field_partner_coupon_code)) {
+      $couponId = $term->field_partner_coupon_code['und'][0]['target_id'];
+      if(!isset($_SESSION['coupon'])) $_SESSION['coupon'] = $couponId;
+    }
+  }
+
+  $build = taxonomy_term_page($term);
+  return $build;
+}
+
+
+/*
+ * If there's a coupon in the session for the user, add it to the 
+ * cart page when the get there and refresh the order
+ * Implements hook_page_alter().
+ */
+function igd_auto_coupons_page_alter(&$page) {
+  // Make sure you're on the right page
+  if (arg(0) == 'cart') {
+    //If coupon is set in session
+    if(isset($_SESSION['coupon']) && $coupon = commerce_coupon_load($_SESSION['coupon'])) {
+      global $user;
+      //if cart doesn't have a coupon
+      $cart = commerce_cart_order_load($user->uid);
+
+      //Check if product is a online_course
+      $line_item_type = FALSE;
+      if($cart->order_number > 1) {
+        $order_wrapper = entity_metadata_wrapper('commerce_order', $cart->order_number);
+        foreach($order_wrapper->commerce_line_items as $idx => $line) {
+          if($line->type->value() == "product")
+            if($line->commerce_product->getBundle() == "online_course") $line_item_type = TRUE;
+        }
+      }
+
+      //check if coupon already used or if $line_item_type is true
+      if($line_item_type && ($user->uid == 0 || commerce_coupon_get_number_of_uses_for_user($coupon->coupon_id, $user) < 1)) {
+        $coupons = commerce_coupon_action_get_coupons_for_order($cart);
+        if(empty($coupons['order_coupons'])) {
+          $ret = commerce_coupon_redeem_coupon($coupon, $cart);
+          commerce_cart_order_refresh($cart);
+          //refresh page
+          drupal_goto("cart");
+        }
+      }
+    }
+  }
+}

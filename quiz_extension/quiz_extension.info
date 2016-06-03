@@ -1,0 +1,7 @@
+name = Quiz - Extension
+description = IGD-specific quiz behavior. Includes rules to add user tokens, consume user token, and exposing quiz as web service.
+package = Other
+dependencies[] = rules
+dependencies[] = quiz
+dependencies[] = services
+core = 7.x

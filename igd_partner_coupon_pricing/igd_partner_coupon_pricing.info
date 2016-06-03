@@ -1,0 +1,13 @@
+name = IGD Partner Coupon Pricing
+description = Update the price display for a product based on coupons and partners
+package = IGD
+core = 7.x
+dependencies[] = ctools
+dependencies[] = commerce_cart
+dependencies[] = commerce_coupon
+dependencies[] = commerce_order
+dependencies[] = commerce_payment
+dependencies[] = entity
+dependencies[] = rules
+dependencies[] = rules_conditional
+dependencies[] = rules_session_vars

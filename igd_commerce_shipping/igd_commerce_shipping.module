@@ -1,0 +1,303 @@
+<?php
+
+/**
+ * @file
+ * Defines an igd shipping method for shipping of products to customers.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function igd_commerce_shipping_menu() {
+  $items['admin/config/igd/shipping'] = array(
+    'title' => 'Shipping message configure',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('igd_commerce_shipping_form'),
+    'access arguments' => array('administer users'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+ 
+  return $items;
+}
+
+/**
+ * Implements hook_commerce_shipping_method_info().
+ */
+function igd_commerce_shipping_commerce_shipping_method_info() {
+  $shipping_methods = array();
+
+  $shipping_methods['igd_shipping_method'] = array(
+    'title' => t('IGD Shipping Method'),
+    'description' => t('Defines a few flat rate services and sets the number of days it ships'),
+  );
+
+  return $shipping_methods;
+}
+
+/**
+ * Implements hook_commerce_shipping_service_info().
+ */
+function igd_commerce_shipping_commerce_shipping_service_info() {
+  $shipping_services = array();
+
+  $callbacks = array(
+    'rate' => 'igd_commerce_shipping_service_rate',
+  );
+
+  //Wait days - The number of days it takes to process the certificate
+  //Mailing Days - The number of days it takes the deliverer to deliver (post office)
+  //Delivery Days - The number of days total for delivery
+
+  $shipping_services['igd_0day'] = array(
+    'title' => t('Overnight Shipping'),
+    'description' => t('Overnight Shipping'),
+    'display_title' => t('Overnight Shipping'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 1,
+    'mailing_days' => 1,
+    'delivery_days' => 1,
+    'usps_type' => 'Fedex',
+    'marketing_message' => 'Urgent',
+    'callbacks' => $callbacks,
+  );
+
+  $shipping_services['igd_1day'] = array(
+    'title' => t('Expedited Certificate and overnight delivery'),
+    'description' => t('Express Shipping'),
+    'display_title' => t('Express Shipping: 1-2 Days'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 0,
+    'mailing_days' => 1,
+    'delivery_days' => 1,
+    'marketing_message' => 'Faster',
+    'usps_type' => 'Express',
+    'callbacks' => $callbacks,
+  );
+
+  $shipping_services['igd_3day'] = array(
+    'title' => t('3 Day Delivery'),
+    'description' => t('Priority Shipping'),
+    'display_title' => t('Priority Shipping: 3-4 Days'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 1,
+    'mailing_days' => 2,
+    'delivery_days' => 3,
+    'marketing_message' => 'Fast',
+    'usps_type' => 'Priority',
+    'callbacks' => $callbacks,
+  );
+
+  $shipping_services['igd_7day'] = array(
+    'title' => t('7 Day Delivery'),
+    'description' => t('Expedited Shipping'),
+    'display_title' => t('Expedited Shipping: 5-7 Days'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 3,
+    'mailing_days' => 2,
+    'delivery_days' => 5,
+    'usps_type' => 'Expedited',
+    'marketing_message' => 'Recommended',
+    'callbacks' => $callbacks,
+  );
+
+  $shipping_services['igd_14day'] = array(
+    'title' => t('14 Day Delivery'),
+    'description' => t('First Class Shipping'),
+    'display_title' => t('First Class Shipping: 8-14 Days'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 6,
+    'mailing_days' => 8,
+    'delivery_days' => 14,
+    'usps_type' => 'First Class',
+    'marketing_message' => 'Included',
+    'callbacks' => $callbacks,
+  );
+
+/*
+  $shipping_services['igd_30day'] = array(
+    'title' => t('30 Day Delivery'),
+    'description' => t('30 Day Delivery, free of charge'),
+    'display_title' => t('30 Day Delivery'),
+    'shipping_method' => 'igd_shipping_method',
+    'price_component' => 'shipping',
+    'wait_days' => 7,
+    'mailing_days' => 14,
+    'delivery_days' => 7,
+    'usps_type' => 'First Class Mail',
+    'marketing_message' => 'Free',
+    'callbacks' => $callbacks,
+  );
+*/
+
+  return $shipping_services;
+}
+
+/**
+ * Shipping service callback: returns a base price array for a shipping service
+ * calculated for the given order.
+ */
+function igd_commerce_shipping_service_rate($service, $order = NULL) {
+  switch ($service['name']) {
+    case 'igd_0day':
+      $amount = 7995;
+      break;
+    case 'igd_1day':
+      $amount = 4495;
+      break;
+    case 'igd_3day':
+      $amount = 1995;
+      break;
+    case 'igd_7day':
+      $amount = 995;
+      break;
+    case 'igd_14day':
+      $amount = 0;
+      break;
+  }
+  return array(
+    'amount' => $amount,
+    'currency_code' => 'USD',
+    'data' => array(),
+  );
+}
+
+/**
+ * Update the shipping options with the marketing message
+ */
+function igd_commerce_shipping_commerce_shipping_service_rate_options_alter(&$options, $order) {
+  foreach ($options AS $key => &$value) {
+    //Load shipping option and add to the end of the label
+    $s = commerce_shipping_service_load($key);
+    $value .= " <span class='marketing_message'>" . $s['marketing_message'] . "</span>";
+  }
+  return $options;
+}
+
+/*
+ * Show the block for shipping prices
+ */
+function igd_commerce_shipping_block_info() {
+  // Many options are defined in hook_block_info():
+  $blocks['igd'] = array(
+    'info' => t('IGD Shipping Options'),
+    'cache' => DRUPAL_CACHE_PER_ROLE, // default
+  );
+
+  return $blocks;
+}
+
+/*
+ * Returns the shipping options block info
+ */
+function igd_commerce_shipping_block_view($delta = '') {
+  $block = array();
+  //The $delta parameter tells us which block is being requested.
+  switch ($delta) {
+    case 'igd':
+      $array = igd_commerce_shipping_commerce_shipping_service_info();
+
+      $value .= "<table>";
+      foreach($array AS $title => $shipping) {
+        $prices = igd_commerce_shipping_service_rate( array('name' => $title), NULL);
+        $amount = "$".$prices['amount'] / 100;
+        $value .= "<tr>
+          <td class='shipping_amount'>".$amount."</td>
+          <td class='shipping_name'>".$shipping['description']."
+          <span class='shipping_message'>(".$shipping['marketing_message'].")</span>
+        </td></tr>";
+      }
+      $value .= "</table>";
+
+      $block['subject'] = t('Shipping and Certificate Processing');
+      $block['content'] = $value;
+      break;
+  }
+  //shipping message text
+  $message = variable_get('shipping_message', 'shipping');
+  $block['content'] = t($message) . $block['content'];
+
+  return $block;
+}
+
+/**
+* Implements hook_field_formatter_info().
+*/
+function igd_commerce_shipping_field_formatter_info() {
+  return array(
+    'igd_commerce_shipping_service_delivery_days' => array(
+      'label' => t('Delivery Days'),
+      'field types' => array('list_text'),
+    ),
+    'igd_commerce_shipping_service_usps_type' => array(
+      'label' => t('USPS Type'),
+      'field types' => array('list_text'),
+    ),
+    'igd_commerce_shipping_service_wait_days' => array(
+      'label' => t('Wait Days'),
+      'field types' => array('list_text'),
+    ),
+    'igd_commerce_shipping_service_mailing_days' => array(
+      'label' => t('Mailing Days'),
+      'field types' => array('list_text'),
+    ),
+  );
+}
+
+/**
+* Implements hook_field_formatter_view().
+*/
+function igd_commerce_shipping_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+  switch ($display['type']) {
+    case 'igd_commerce_shipping_service_delivery_days':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array(
+          '#markup' => $entity->data['shipping_service']['delivery_days'],
+        );
+      }
+    break;
+    case 'igd_commerce_shipping_service_usps_type':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array(
+          '#markup' => $entity->data['shipping_service']['usps_type'],
+        );
+      }
+    break;
+    case 'igd_commerce_shipping_service_wait_days':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array(
+          '#markup' => $entity->data['shipping_service']['wait_days'],
+        );
+      }
+    break;
+    case 'igd_commerce_shipping_service_mailing_days':
+      foreach ($items as $delta => $item) {
+        $element[$delta] = array(
+          '#markup' => $entity->data['shipping_service']['mailing_days'],
+        );
+      }
+    break;
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_form().
+ * Admin form to configurable shipping message
+ */
+function igd_commerce_shipping_form($form, &$form_state) {
+  $form['shipping_message'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Shipping message'),
+    '#rows' => 5,
+    '#required' => TRUE,
+    '#default_value' => variable_get('shipping_message', ‘shipping’),
+  );
+ 
+  return system_settings_form($form);
+}

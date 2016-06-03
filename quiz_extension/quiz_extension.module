@@ -1,0 +1,615 @@
+<?php
+
+/*
+ * @file
+ * Module file.
+ */
+
+
+
+/*
+ * Function to save rule component configuration.
+ */
+
+function quiz_extension_default_rules_configuration() {
+  $configs = array();
+  $add_tokens = '{ "quiz_extension_add_tokens" : {
+      "LABEL" : "Quiz - Add Tokens",
+      "PLUGIN" : "action set",
+      "REQUIRES" : [ "quiz_extension" ],
+      "USES VARIABLES" : {
+        "userid" : { "label" : "User ID", "type" : "integer" },
+        "termid" : { "label" : "Term ID", "type" : "integer" },
+        "no_tokens" : { "label" : "Number of Tokens", "type" : "integer" }
+      },
+      "ACTION SET" : [
+        { "quiz_extension_add_user_tokens" : {
+            "user" : [ "userid" ],
+            "term" : [ "termid" ],
+            "tokens" : [ "no-tokens" ]
+          }
+        }
+      ]
+    }
+  }';
+  $use_token = '{ "quiz_extension_consume_token" : {
+      "LABEL" : "Quiz - Consume Token",
+      "PLUGIN" : "action set",
+      "REQUIRES" : [ "quiz_extension" ],
+      "USES VARIABLES" : {
+        "userid" : { "label" : "User ID", "type" : "integer" },
+        "termid" : { "label" : "Term ID", "type" : "integer" }
+      },
+      "ACTION SET" : [
+        { "quiz_extension_consume_user_token" : {
+            "user" : [ "userid" ],
+            "term" : [ "termid" ]
+          }
+        }
+      ]
+    }
+  }';
+  $display_tokens = '{ "quiz_extension_get_user_tokens" : {
+      "LABEL" : "Quiz - Display Token",
+      "PLUGIN" : "action set",
+      "REQUIRES" : [ "quiz_extension" ],
+      "USES VARIABLES" : {
+        "userid" : { "label" : "User ID", "type" : "integer" },
+        "termid" : { "label" : "Term ID", "type" : "integer" }
+      },
+      "ACTION SET" : [
+        { "quiz_extension_get_user_tokens" : {
+            "user" : [ "userid" ],
+            "term" : [ "termid" ]
+          }
+        }
+      ]
+    }
+  }';
+  $configs['quiz_extension_add_tokens'] = rules_import($add_tokens);
+  $configs['quiz_extension_consume_token'] = rules_import($use_token);
+  $configs['quiz_extension_display_tokens'] = rules_import($display_tokens);
+  return $configs;
+}
+
+/**
+ * Implements hook_services_resources().
+ */
+function quiz_extension_services_resources() {
+  $resources = array(
+    'quiz' => array(
+      'retrieve' => array(
+        'help' => 'Get all Quizes for user',
+        'callback' => 'quiz_extension_view_user_quizes',
+        'access callback' => 'quiz_extension_user_quizes_access',
+        'access arguments' => array('view'),
+        'access arguments append' => TRUE,
+        'args' => array(
+          array(
+            'name' => 'uid',
+            'type' => 'int',
+            'description' => 'User id',
+            'source' => array('path' => 0),
+            'optional' => FALSE,
+          ),
+        ),
+      ),
+    ),
+  );
+  return $resources;
+}
+
+/*
+ * Function to get quizes for specific user for webservice.
+ */
+
+function quiz_extension_view_user_quizes($uid) {
+
+  $results = array();
+  $dbresult = db_query('SELECT DISTINCT(n.nid), qnrs.result_id
+    FROM {node} n
+    INNER JOIN {quiz_node_properties} qnp ON n.nid = qnp.nid
+    INNER JOIN {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+    INNER JOIN {users} u ON u.uid = qnrs.uid
+    WHERE n.type = :type
+      AND u.uid = :uid
+    ORDER BY qnrs.result_id DESC', array(':type' => 'quiz', ':uid' => $uid));
+
+  // Create an array out of the results.
+  foreach ($dbresult as $result) {
+    $result = (array) $result;
+//    $results[$result['result_id']['data']] = quiz_extension_user_results($result['result_id'], $uid);
+    $results[$result['result_id']] = quiz_extension_user_results($result['result_id'], $uid);
+  }
+  if (count($results) > 0) {
+    return $results;
+  }
+  else {
+    return services_error(t("Web service couldn't find data against supplied user ID"));
+  }
+}
+
+/*
+ * Function to check user access for quiz.
+ */
+
+function quiz_extension_user_quizes_access($op = 'view') {
+  switch ($op) {
+    case 'view':
+      //return user_access('view any quiz results');
+      return user_access('access quiz');
+  }
+}
+
+/**
+ * Loading data against quiz for specific user.
+ *
+ * @param $result_id $user_id
+ *  Result id and user id
+ */
+function quiz_extension_user_results($result_id, $user_id) {
+  $result = db_query('SELECT qnp.nid, qnp.vid, qnrs.uid
+    FROM {quiz_node_properties} qnp
+    INNER JOIN {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+    WHERE qnrs.result_id = :rid', array(':rid' => $result_id))->fetch();
+
+  if ($result->nid) {
+    // User can view own results (quiz_menu sets access to 'own results').
+    // User with role 'user results' can view other user's results.
+    if ($result->uid != $user_id && !user_access('view any quiz results')) {
+      return;
+    }
+
+    $quiz = node_load($result->nid, $result->vid);
+    $questions = _quiz_get_answers($quiz, $result_id);
+    $score = quiz_calculate_score($quiz, $result_id);
+    $summary = _quiz_get_summary_text($quiz, $score);
+    $data = array(
+      'quiz' => $quiz,
+      'questions' => $questions,
+      'score' => $score,
+      'summary' => $summary,
+      'result_id' => $result_id,
+      'user_tokens' => quiz_extension_get_user_tokens($user_id),
+    );
+    return $data;
+  }
+  else {
+    return;
+  }
+}
+
+/*
+ * Function to assign tokens to user on rules action.
+ */
+
+function quiz_extension_add_user_tokens($args, $settings) {
+  $userid = $args['user'];
+  $termid = $args['term'];
+  $tokens = $args['tokens'];
+  $token = quiz_extension_check_user_tokens($userid, $termid);
+  if ($token['utid']) {
+    $updated_tokens = $token['total_tokens'] + $tokens;
+    db_update('users_token') // Table name
+        ->fields(array(
+          'total_tokens' => $updated_tokens,
+        ))
+        ->condition('utid', $token['utid'], '=')
+        ->execute();
+  }
+  else {
+    db_insert('users_token') // Table name
+        ->fields(array(
+          'uid' => $userid,
+          'tid' => $termid,
+          'total_tokens' => $tokens,
+        ))
+        ->execute();
+  }
+}
+
+/*
+ * Function to consume token of user on rules action.
+ */
+
+function quiz_extension_consume_user_token($args, $settings) {
+  $userid = $args['user'];
+  $termid = $args['term'];
+  $check_entry = quiz_extension_check_user_tokens($userid, $termid);
+  if ($check_entry['utid']) {
+    $used_tokens = quiz_extension_get_consumed_user_tokens($userid, $termid);
+    $used_tokens++;
+    db_update('users_token') // Table name
+        ->fields(array(
+          'used_tokens' => $used_tokens,
+        ))
+        ->condition('utid', $check_entry['utid'], '=')
+        ->execute();
+  }
+}
+
+/*
+ * Function to get tokens for user for specific term.
+ */
+
+function quiz_extension_get_user_tokens($uid, $tid = '') {
+  $query = db_select('users_token', 'u')
+      ->fields('u', array('total_tokens', 'used_tokens', 'tid'));
+  if ($tid) {
+    $query->condition('tid', $tid, '=');
+  }
+  $results = $query->condition('uid', $uid, '=')->execute();
+
+  if ($tid) {
+    $result = $results->fetchAssoc();
+    $remaining_tokens = $result['total_tokens'] - $result['used_tokens'];
+    return $remaining_tokens;
+  }
+  else {
+    $all_tokens = array();
+    foreach ($results as $result) {
+      //Add term name and data
+      $term = entity_load('taxonomy_term', array($result->tid));
+      $result->term = $term;
+
+      $all_tokens[$result->tid] = $result;
+    }
+    return $all_tokens;
+  }
+}
+
+/*
+ * Function to 1check tokens for user for specific term.
+ */
+
+function quiz_extension_check_user_tokens($uid, $tid) {
+  $query = db_select('users_token', 'u')
+      ->fields('u', array('utid', 'total_tokens'))
+      ->condition('uid', $uid, '=')
+      ->condition('tid', $tid, '=')
+      ->execute();
+  $results = $query->fetchAssoc();
+  return $results;
+}
+
+/*
+ * Function to get consumed tokens for user for specific term.
+ */
+
+function quiz_extension_get_consumed_user_tokens($uid, $tid) {
+  $query = db_select('users_token', 'u')
+      ->fields('u', array('used_tokens'))
+      ->condition('uid', $uid, '=')
+      ->condition('tid', $tid, '=')
+      ->execute();
+  $results = $query->fetchAssoc();
+  return $results['used_tokens'];
+}
+
+/*
+ * Implements hook_menu_alter().
+ */
+
+function quiz_extension_menu_alter(&$items) {
+  // Altering access callback for quiz take menu,
+  chain_menu_access_chain($items, 'node/%node/take', 'quiz_extension_check_quiz_access', array(1));
+
+  //Remove edit tab for users
+  $items['user/%user/edit']['access callback']  = '_no_user_node_view';
+  $items['node/%node']['access callback'] = '_no_user_node_view';
+  $items['node/%node/home'] = array(
+    'title' => 'Home',
+    'type' => MENU_LOCAL_TASK,
+    'page callback' => '_home_page',
+    'access callback' => '_user_has_tokens',
+    // 'access arguments' => array(1)
+  );
+  $items['node/%node/home/%quiz_rid'] = $items['node/%node/myresults/%quiz_rid'];
+  $items['node/%node/home/%quiz_rid']['title'] = 'Review Test';
+  $items['node/%node/home/%quiz_rid']['type'] = MENU_DEFAULT_LOCAL_TASK;
+  $items['node/%node/home/%quiz_rid/home'] = $items['node/%node/home'];
+
+  $items['node/%node/myresults/%quiz_rid']['access callback'] = '_no_user_node_view';
+  $items['node/%node/myresults/%quiz_rid']['access arguments'] = array();
+  $items['node/%node/myresults']['access callback'] = '_no_user_node_view';
+  $items['node/%node/myresults']['access arguments'] = array();
+
+  // $items['node/%node/myresults']['title'] = 'Review Test';
+  // $items['node/%node/myresults']['access callback'] = array('_no_user_node_view');
+  // $items['user/%/myresults']['title'] = 'Review Test';
+  // $items['node/%node/myresults/%quiz_rid']['title'] = 'Review Test';
+  // $items['node/%node/myresults/%quiz_rid']['type'] = MENU_DEFAULT_LOCAL_TASK;
+  // $items['node/%node/myresults/%quiz_rid']['access callback'] = array('quiz_take_access');
+  // $items['node/%node/myresults/%quiz_rid']['access arguments'] = array(2);
+  // $items['node/%node/myresults/%quiz_rid']['access callback'] = array('_no_user_node_view');
+  // file_put_contents('/tmp/items', print_r($items, TRUE));
+  // error_log("I am an aardvark.");
+}
+
+function quiz_extension_menu() {
+  return array(
+    'home' => array(
+      'page callback' => '_home_page',
+      'access callback' => '_user_has_tokens',
+    ),
+  );
+}
+
+function _user_has_tokens() {
+  $tokens = _get_all_user_tokens();
+  $num_tokens = 0;
+  foreach($tokens as $a_token) {
+    $num_tokens += $a_token['total_tokens'];
+  }
+  if($num_tokens > 0)
+    return TRUE;
+  else 
+    return FALSE;
+}
+
+function _get_all_user_tokens($acct = NULL) {
+  if(!$acct) {
+    global $user;
+    $userid = $user->uid;
+  }
+  //Variables
+  $vocab_machine_name = 'state_information';
+  $field_name = 'field_quiz_state';
+
+  $voc = taxonomy_vocabulary_machine_name_load($vocab_machine_name);
+  $terms = taxonomy_get_tree($voc->vid, 0, NULL, TRUE);
+
+  $tokens = array();
+  foreach($terms AS $term) {
+    $termid = $term->tid;
+    $tokens[$termid] = quiz_extension_check_user_tokens($userid, $termid);
+  }
+  return $tokens;
+
+}
+
+function _home_page() {
+  global $user;
+  $userid = $user->uid;
+  //Variables
+  $vocab_machine_name = 'state_information';
+  $field_name = 'field_quiz_state';
+
+  $voc = taxonomy_vocabulary_machine_name_load($vocab_machine_name);
+  $terms = taxonomy_get_tree($voc->vid, 0, NULL, TRUE);
+
+  drupal_add_css(drupal_get_path('module', 'quiz_extension') . '/quiz_extension.css');
+  drupal_add_library('system', 'ui.progressbar');
+  drupal_add_js(drupal_get_path('module', 'quiz_extension') . '/quiz_extension.js');
+
+  $rendy = array(
+    'button' => array(
+      '#markup' => '<a class="rightside" href="https://igottadrive.com/user" data-mini="true" data-role="button" data-inline="true" data-icon="delete">Close</a>',
+    ),
+  );
+
+  foreach($terms AS $term) {
+    $termid = $term->tid;
+    $token = quiz_extension_check_user_tokens($userid, $termid);
+    if($token) {
+      $token['used_tokens'] = quiz_extension_get_consumed_user_tokens($userid, $termid);
+      $token['remaining_tokens'] = $token['total_tokens'] - $token['used_tokens'];
+
+      //How do we get this nid??? Find first quiz with the termId
+      $nodeQuery = new EntityFieldQuery();
+      $entities = $nodeQuery->entityCondition('entity_type', 'node')
+        ->entityCondition('bundle', 'quiz')
+        ->propertyCondition('status', 1)
+//        ->propertyCondition('language', 'en')
+        ->fieldCondition($field_name, 'tid', $termid);
+      $result = $entities->execute();
+      $nid = key($result['node']);
+
+      $used = l(t($token['used_tokens']), 'user/' . $userid . '/myresults');
+      $remaining = ($token['remaining_tokens']) ?
+        l(t('Start Test'), 'node/' . $nid . '/take'):
+        l(t('Purchase More'), 'http://igottadrive.com/' . strtolower($term->name) . '-drivers-ed');
+
+      $pass_rate = db_query('SELECT qnp.pass_rate FROM {quiz_node_properties} qnp WHERE qnp.nid = :nid',
+        array(':nid' => $nid))->fetchAssoc();
+      $pass_rate = reset($pass_rate);
+      // file_put_contents('/tmp/pass_rate', $pass_rate, TRUE);
+
+      $res = db_query('
+        SELECT qnp.nid, qnp.pass_rate, qnp.number_of_random_questions AS num_questions, qnrs.result_id, 
+        qnrs.time_start, qnrs.time_end, qnrs.score, COUNT(qnra.result_id) AS num_answered, SUM(qnra.is_correct) 
+        AS is_correct
+        FROM {quiz_node_properties} qnp
+        INNER JOIN {quiz_node_results} qnrs ON qnrs.vid = qnp.vid
+        LEFT JOIN {quiz_node_results_answers} qnra ON qnra.result_id = qnrs.result_id
+        WHERE qnrs.uid = :uid AND qnrs.nid = :nid 
+        GROUP BY qnrs.result_id
+        ORDER BY qnrs.time_start ASC',
+        array(':uid' => $userid, ':nid' => $nid)
+      );
+
+      // Create an array out of the results.
+      $none_started = TRUE;
+      $results = array();
+      $launch_button_href = "/node/$nid/take";
+      while ($line = $res->fetchAssoc()) {
+        $test_result = array();
+        if($line['time_start'] > 0 && $line['time_end'] == 0) {
+          $test_result['Started'] = format_date($line['time_start'], 'short');
+          $percent = round($line[num_answered] / $line[num_questions] * 100);
+          $test_result['Finished'] = "<div class='progressbar' value='$line[num_answered]' max='$line[num_questions]'>
+            <span class='progress-label' >$line[num_answered] of $line[num_questions] ($percent%)</span>
+            </div>";
+          $test_result['Score'] = '<span class="quiz-result quiz-inprogress">IN PROGRESS</span>';
+          $test_result['Action'] = "<a data-role='button' data-mini='true' href='$launch_button_href'>Continue?</a>";
+          $none_started = FALSE;
+        } else if($line['time_end'] > 0) {
+          $test_result['Started'] = format_date($line['time_start'], 'short');
+          $test_result['Finished'] = format_date($line['time_end'], 'short');
+          $review_href = "/node/$nid/home/$line[result_id]";
+          $review_link = "<a data-role='button' data-mini='true' href='$review_href'>Review?</a>";
+          if($line['score'] >= $line['pass_rate']) {
+            $classes = 'quiz-result quiz-passed q-correct';
+            $test_result['Score'] = "<span class='".$classes."'>$line[score]% ($line[is_correct]/$line[num_questions]) - PASSED</span>";
+            $test_result['Action'] = $review_link;
+          } else {
+            $classes = 'quiz-result quiz-failed q-wrong';
+            $test_result['Score'] = "<span class='".$classes."'>$line[score]% ($line[is_correct] / $line[num_questions]) - FAILED</span>";
+            $test_result['Action'] = $review_link;
+          }
+        }
+        // $results[$line['result_id']] = $line;
+        if(!empty($test_result))
+          $results[] = $test_result;
+      }
+
+      if($token['remaining_tokens'] > 0) {
+        if($none_started) {
+          $launch_button_text = "Start your $term->name Practice Test";
+        } else {
+          $launch_button_text = "Continue your $term->name Practice Test";
+        }
+      } else {
+        $launch_button_text = "Purchase More $term->name Practice Tests";
+        $launch_button_href = 'http://igottadrive.com/' . strtolower($term->name) . '-drivers-ed';
+      }
+
+      drupal_set_title(t('Practice Tests'), PASS_THROUGH);
+//      drupal_set_title(t('<a class="rightside" href="https://igottadrive.com/user" data-mini="true" data-role="button" data-inline="true" data-icon="delete">Close</a><div style="clear: both;">Practice Tests</div>'), PASS_THROUGH);
+      $this_test = array(
+        'button' => array(
+          '#markup' => $launch_button_text,
+          '#prefix' => "<a data-role='button' href='$launch_button_href'>",
+          '#suffix' => "</a>"
+        ),
+        'message' => array(
+          '#markup' => "You've used $token[used_tokens] out of your $token[total_tokens] practice tests.",
+          '#prefix' => '<center><p>',
+          '#suffix' => '</p></center>'
+        ),
+        'test_info' => array(
+          '#markup' => "The passing score for this test is $pass_rate%.",
+          '#prefix' => '<center><p>',
+          '#suffix' => '</p></center>'
+        ),
+      );
+      if(!empty($results)) {
+        $this_test['results_table'] = array(
+          '#theme' => 'table',
+          '#header' => array_keys($results[0]),
+          '#rows' => $results,
+          '#attributes' => array(
+            'class' => array('ui-responsive'),
+            'data-role' => array('table'),
+          )
+        );
+      }
+      $rendy[] = $this_test;
+    }
+  }
+
+  return $rendy;
+}
+
+function _no_user_node_view() {
+  global $user;
+  if(in_array('administrator', $user->roles))
+    return TRUE;
+}
+
+
+/*
+ * Function to check if user has access to take quiz.
+ */
+
+function quiz_extension_check_quiz_access($node) {
+  global $user;
+  // Getting term attach with quiz.
+  $terms = _quiz_get_terms($node->vid);
+//echo"<pre>";print_r($terms);echo "</pre>";
+  if(isset($terms[0]) && $first_term = $terms[0]) {
+    $user_tokens = quiz_extension_get_user_tokens($user->uid, $first_term->tid);
+    if ($user_tokens > 0 || $first_term->name == 'default') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+ * Function to check if user has access to take quiz.
+ */
+
+function quiz_extension_node_view_alter(&$nodeArray, $teaser, $page) {
+  global $user;
+  $node = $nodeArray['#node'];
+  if($node->type == 'quiz') {
+    $terms = _quiz_get_terms($node->vid);
+    if(isset($terms[0]) && $first_term = $terms[0]) {
+      $user_tokens = quiz_extension_get_user_tokens($user->uid, $first_term->tid);
+      if($user_tokens < 1) $nodeArray['take'] = array();
+    }
+  }
+}
+
+/*
+ * Implementation of hook_user_view_alter().
+ */
+
+function quiz_extension_user_view_alter(&$build) {
+  global $base_path;
+  //Add quiz token info here
+  $userid = $build['#account']->uid;
+
+  drupal_add_css(drupal_get_path('module', 'quiz_extension') . '/quiz_extension.css');
+
+  //Variables
+  $vocab_machine_name = 'state_information';
+  $field_name = 'field_quiz_state';
+
+  $voc = taxonomy_vocabulary_machine_name_load($vocab_machine_name);
+  $terms = taxonomy_get_tree($voc->vid, 0, NULL, TRUE);
+
+  foreach($terms AS $term) {
+    $termid = $term->tid;
+    $token = quiz_extension_check_user_tokens($userid, $termid);
+    if($token) {
+      $token['used_tokens'] = quiz_extension_get_consumed_user_tokens($userid, $termid);
+      $token['remaining_tokens'] = $token['total_tokens'] - $token['used_tokens'];
+
+      //How do we get this nid??? Find first quiz with the termId
+      $nodeQuery = new EntityFieldQuery();
+      $entities = $nodeQuery->entityCondition('entity_type', 'node')
+        ->entityCondition('bundle', 'quiz')
+        ->propertyCondition('status', 1)
+//        ->propertyCondition('language', 'en')
+        ->fieldCondition($field_name, 'tid', $termid);
+      $result = $entities->execute();
+      $nid = key($result['node']);
+
+      $used = l(t($token['used_tokens']), 'user/' . $userid . '/myresults');
+      $remaining = ($token['remaining_tokens']) ?
+        l(t($token['remaining_tokens']), 'node/' . $nid . '/take'):
+        l(t('Purchase More'), 'http://igottadrive.com/' . strtolower($term->name) . '-drivers-ed');
+
+      $build[$term->name] = array(
+        '#theme' => 'table',
+        '#header' => array(
+          'Take a practice test',
+          'See your results',
+          'Total',
+        ),
+        '#rows' => array(array(
+          $remaining,
+          $used,
+          $token['total_tokens'],
+        )),
+        '#caption' => $term->name,
+        '#attributes' => array(
+          'class' => array('ui-responsive'),
+          'data-role' => array('table'),
+        ),
+      );
+    }
+  }
+}

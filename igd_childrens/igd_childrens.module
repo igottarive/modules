@@ -1,0 +1,82 @@
+<?php
+
+/**
+ * @file
+ * IGD Children's hospital donate amount
+ * The coupon granted amount for each completed order with the coupon code of "Childrens10off"
+ */
+
+/*
+ * Implements hook_block_info().
+ */
+function igd_childrens_block_info() {
+  // Many options are defined in hook_block_info():
+  $blocks['igd_childrens'] = array(
+    'info' => t("IGD Children's Hospital Donations"),
+    'cache' => DRUPAL_CACHE_PER_ROLE, // default
+  );
+  return $blocks;
+}
+
+/*
+ * Implements hook_block_view().
+ */
+function igd_childrens_block_view($delta = '') {
+  $block = array();
+  //The $delta parameter tells us which block is being requested.
+  switch ($delta) {
+    case 'igd_childrens':
+      $block['subject'] = t('Total donation amount');
+      $block['content'] = _igd_childrens_content();
+  }
+  return $block;
+}
+
+/**
+ * Callback implemented by hook_block_view().
+ */
+function _igd_childrens_content() {
+  $couponId = 110463;
+  $result = db_query("SELECT order_id
+    FROM {field_revision_commerce_coupon_order_reference} 
+    LEFT JOIN commerce_order ON entity_id = commerce_order.order_id
+    WHERE commerce_coupon_order_reference_target_id = ".$couponId." && commerce_order.status = 'completed'
+    GROUP BY commerce_order.order_id
+  LIMIT 0, 20");
+
+  $orderIds = $result->fetchAll();
+  $total = 0;
+  $count = 0;
+
+  foreach($orderIds AS $orderId) {
+    // Get the coupon & order from the entities returned by the view.
+    $coupon = commerce_coupon_load($couponId);
+    $order = commerce_order_load($orderId->order_id);
+
+    drupal_alter('commerce_coupon_granted_amount', $amount, $coupon, $order);
+    $amount = (float)substr($amount, 1);
+    $total += $amount;
+    $count++;
+  }
+
+  $goal = variable_get('childrens_goal');
+  $percent = $total/$goal;;
+
+  $variables = array('count' => $count, 'total' => $total, 'goal' => $goal, 'percent' => $percent);
+
+  return theme('_igd_childrens_theme', $variables);
+}
+
+
+/**
+ * Implements hook_theme().
+ */
+function igd_childrens_theme() {
+  return array(
+    '_igd_childrens_theme' => array(
+      'variables' => array('count' => NULL,'total' => NULL,'goal' => NULL,'percent' => NULL),
+      'template' => 'igd_childrens',
+      'path' => drupal_get_path('module', 'igd_childrens'),
+    ),
+  );
+}

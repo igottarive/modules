@@ -1,0 +1,351 @@
+<?php
+/**
+ *  These are the main things this module does
+ *    1a) Get the term that matches the hash of the page and add a button 
+ *      for a modal popup and pop it up
+ *    1b) Add the partnerid and the partner's couponid to the user's session
+ *
+ *    2) Get the product and coupon from the partner and set a well 
+ *      know set of html to have the retail price, the coupon price, and the final price
+ */
+
+/**
+ *  Implementation of hook_menu()
+ */
+function igd_partner_coupon_pricing_menu() {
+  $items = array();
+  $items['igd_partner_coupon_pricing/partner/%'] = array(
+    'type'               => MENU_CALLBACK,
+    'title'              => 'Partner',
+    'access arguments'   => array('access content'),
+    'page callback'      => 'igd_partner_coupon_pricing_modal_partner_content',
+    'page arguments'     => array(2),
+    'delivery callback'  => 'igd_partner_coupon_pricing_modal_partner_callback',  // Magic goes here
+  );
+  $items['partnerid/%'] = array(
+    'type'               => MENU_CALLBACK,
+    'title'              => 'Partner',
+    'access arguments'   => array('access content'),
+    'page callback'      => 'igd_partner_coupon_pricing_cart_content',
+    'page arguments'     => array(1),
+  );
+  return $items;
+}
+
+/**
+ * Get content for a partner ad add product and coupon to a user's cart
+ */
+function igd_partner_coupon_pricing_cart_content($partner) {
+  file_put_contents('/tmp/partner', " --- START --- \n", FILE_APPEND);
+  global $user;
+  $partner = filter_var($partner, FILTER_SANITIZE_STRING);
+
+  //If partner is noexist, just return out
+  if($partner == 'noexist') return array();
+
+  // See if the ID is actually a customer affiliate ID
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'user')
+    ->fieldCondition('field_pap_referral_id', 'value', $partner, '=')
+    ->addTag('DANGEROUS_ACCESS_CHECK_OPT_OUT');
+  $customer_affiliate_exists = $query->count()->execute();
+
+  /*
+  $user_aff_id = db_query("SELECT count(affiliate_username)
+    FROM {commerce_post_affiliate_pro_affiliates}
+    WHERE affiliate_id = :partner_id", array(':partner_id' => $partner))->fetchField();        
+   */
+  // If they're a customer affiliate, set the partner code to CUSTOMER
+  if(_is_customer_affiliate($partner)) {
+    if(!empty($_GET['state'])) {
+      $partner = _get_affiliate(trim($_GET['state'], '/'));
+    } else {
+      $partner = 'CUSTOMER';
+    }
+  }
+  //Get partner matching PAP ID
+  $part = _igd_partner_coupon_pricing_load_partner_cache($partner);
+  $part = reset($part);
+  file_put_contents('/tmp/partner', print_r($part, TRUE), FILE_APPEND);
+  file_put_contents('/tmp/partner', " --- END --- \n", FILE_APPEND);
+
+  if($part) {
+    $product_id = $part->field_partner_product['und'][0]['product_id'];
+    _igd_partner_coupon_pricing_add_to_session($part);
+    $lineitem = commerce_cart_product_add_by_id($product_id, 1, TRUE, $user->uid);
+    return array();
+  }
+  file_put_contents('/tmp/cap_dbg', " --- We shouldn't beeeee --- \n", FILE_APPEND);
+}
+
+function _is_customer_affiliate($partner) {
+  // See if the Partner ID is actually a customer affiliate ID
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'user')
+    ->fieldCondition('field_pap_referral_id', 'value', $partner, '=')
+    ->addTag('DANGEROUS_ACCESS_CHECK_OPT_OUT');
+
+  // If more than one user has the same referral ID something has gone badly wrong
+  if($query->count()->execute() == 1) {
+    return TRUE;
+  } 
+
+  return FALSE;
+}
+
+// This is dumb but replaceable
+function _get_affiliate($state_url) {
+  switch ($state_url) {
+  case 'california-drivers-ed':
+    return 'CAP-HTR-CA';
+    break;
+  case 'ohio-drivers-ed':
+    return 'CAP-HTR-OH';
+    break;
+  default:
+    return 'CUSTOMER';
+    break;
+  }
+}
+
+/**
+ *  Grab Render Array to use for modal partner content
+ */
+function igd_partner_coupon_pricing_modal_partner_content($partner = NULL) {
+  global $user;
+  $partner = filter_var($partner, FILTER_SANITIZE_STRING);
+
+  if(!$partner || $partner == 'noexist') {
+    //Add Drupal.settings and js to all pages
+    igd_partner_coupon_pricing_add_pricing(FALSE);
+    ctools_add_js('igd_partner_coupon_pricing', 'igd_partner_coupon_pricing');
+
+    return array(
+      '#type' => 'container',
+      '#attributes' => array('class' => array('noexist')),
+      'content' => array(
+        '#type' => 'markup',
+        '#markup' => t("That partner doesn't extist!"),
+        '#weight' => 0,
+      ),
+    );
+  } else {
+    // If they're a customer affiliate, set the partner code to CUSTOMER
+    if(_is_customer_affiliate($partner)) {
+      if(!empty($_GET['state'])) {
+        $partner = _get_affiliate(trim($_GET['state'], '/'));
+      } else {
+        $partner = 'CUSTOMER';
+      }
+    }
+    //Add partner's coupon to the session
+    $terms = _igd_partner_coupon_pricing_load_partner_cache($partner);
+
+    $this_partner = array_pop($terms);
+    _igd_partner_coupon_pricing_add_to_session($this_partner);
+    igd_partner_coupon_pricing_add_pricing($this_partner->field_partner_popup_enabled['und'][0]['value']);
+
+    return array(
+      '#type' => 'markup',
+      '#pre_render' => array('_igd_partner_coupon_pricing_render_cache_pre_render'),
+      '#$partner' => $partner,
+      '#cache' => array(
+        'keys' => array('partner_render_cache'),
+        'granularity' => DRUPAL_CACHE_PER_PAGE,
+      ),
+      'igd_popup' => $this_partner->field_partner_popup_enabled['und'][0]['value'],
+    );
+  }
+}
+
+/**
+ * Pre-render callback for igd_partner_coupon_pricing_render_cache
+ */
+function _igd_partner_coupon_pricing_render_cache_pre_render($element) {
+  // If they're a customer affiliate, set the partner code to CUSTOMER
+  if(_is_customer_affiliate($element['#$partner'])) {
+    if(!empty($_GET['state'])) {
+      $partner = _get_affiliate(trim($_GET['state'], '/'));
+    } else {
+      $element['partner'] = 'CUSTOMER';
+    }
+  }
+  $terms = _igd_partner_coupon_pricing_load_partner_cache($element['#$partner']);
+
+  $items = array();
+  foreach ($terms as $term) {
+    $element['#markup'] .= token_replace($term->field_partner_popup_text['und'][0]['value'], array('term' => $term));
+    $element['#$partner'] = $term;
+  }
+  $element['#children'] = $element['#markup']; //Fix for bug http://drupal.org/node/914792
+  return $element;
+}
+
+/**
+ * Load Terms into cache
+ */
+function _igd_partner_coupon_pricing_load_partner_cache($partner) {
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'taxonomy_term')
+    ->propertyCondition('vid', 12)
+    ->fieldCondition('field_pap_affiliate_id', 'value', $partner, '=');
+  $result = $query->execute();
+  $tids = array_keys($result['taxonomy_term']);
+  return(taxonomy_term_load_multiple($tids));
+}
+
+/**
+ *  Render modal partner Array back to the ajax call
+ */
+function igd_partner_coupon_pricing_modal_partner_callback($page_callback_result) {
+  $render = drupal_render($page_callback_result);
+  ctools_include('modal');
+  ctools_include('ajax');
+  $ctools_render = ctools_modal_render('igottadrive.com', $render);
+
+  if($page_callback_result['igd_popup']) {
+    print $ctools_render;
+  } else {
+    ctools_modal_command_dismiss();
+  }
+  return;
+}
+
+/**
+ * If not set, set the coupon code for a user based on this term
+ */
+function _igd_partner_coupon_pricing_add_to_session($term) {
+  if($term->vocabulary_machine_name == "partners") {
+    drupal_session_start();
+    if(!isset($_SESSION['partner'])) $_SESSION['partner'] = $term->tid;
+    if(!isset($_COOKIE['partner'])) $_COOKIE['partner'] = $term->tid;
+    if(isset($term->field_partner_coupon_code)) {
+      $couponId = $term->field_partner_coupon_code['und'][0]['target_id'];
+      if(!isset($_SESSION['coupon'])) $_SESSION['coupon'] = $couponId;
+      if(!isset($_COOKIE['coupon'])) $_COOKIE['coupon'] = $couponId;
+    }
+  }
+}
+
+/**
+ * Add pricing and coupon data to Drupal.settings in JS
+ */
+function igd_partner_coupon_pricing_add_pricing($popup) {
+  //Add products and session coupon to drupal settings   
+  $js = array(
+    'igd_partner_coupon_pricing' => array(
+      'coupons' => igd_partner_coupon_pricing_retrieve_coupons(),
+      'products' => igd_partner_coupon_pricing_retrieve_products(),
+      'popup' => $popup,
+    ),
+  );
+  drupal_add_js($js,'setting');
+}
+
+/**
+ * Get coupon info based on session couponId
+ */
+function igd_partner_coupon_pricing_retrieve_coupons() {
+  if(isset($_COOKIE['coupon'])) $couponId = $_COOKIE['coupon'];
+  if(isset($_SESSION['coupon'])) $couponId = $_SESSION['coupon'];
+    
+  if(isset($couponId)) $coup = commerce_coupon_load($couponId);
+    
+  if(!isset($coup)) return FALSE;
+  return array($couponId => $coup->commerce_coupon_fixed_amount['und'][0]['amount'] / 100);
+
+  if(isset($coup->commerce_coupon_fixed_amount)) {
+    return array($couponId => $coup->commerce_coupon_fixed_amount['und'][0]['amount'] / 100);
+  } else {
+    return array($couponId => $coup->commerce_coupon_fixed_amount['und'][0]['amount'] / 100);
+  }
+}
+
+/**
+ * Get all product pricing info
+ */
+function igd_partner_coupon_pricing_retrieve_products() {
+  $array = array();
+  $prods = commerce_product_match_products(array('field_name' => NULL), $instance = NULL, '');
+  foreach($prods AS $id => $prod) {
+    $p = commerce_product_load($id);
+    $array[$p->sku] = $p->commerce_price['und'][0]['amount'] / 100;
+  }
+
+  return $array;
+}
+
+/**
+ *  Implementation of hook_page_alter()
+ */
+function igd_partner_coupon_pricing_page_alter(&$page) {
+  //If no block, load ctools stuff, otherwise let block do it.
+  $block = FALSE;
+  foreach($page AS $id => $section) {
+    if(isset($section['igd_partner_coupon_pricing_igd_partner_coupon_pricing_block'])) $block = TRUE;
+  }
+  if(!$block) {
+    //Add all the ctools requirements for the popup
+    _add_ctools_data();
+  }
+}
+
+/**
+ *  Implementation of hook_block_info()
+ */
+function igd_partner_coupon_pricing_block_info() {
+  $blocks = array();
+  $blocks['igd_partner_coupon_pricing_block'] = array(
+    'info' => t('IGD Partner Pricing Link'),
+    'cache' => DRUPAL_CACHE_PER_ROLE, // default
+  );
+  return $blocks;
+}
+
+/**
+ *  Implementation of hook_block_view()
+ */
+function igd_partner_coupon_pricing_block_view($delta = '') {
+  $block = array();
+  //The $delta parameter tells us which block is being requested.
+  switch ($delta) {
+    case 'igd_partner_coupon_pricing_block':
+      $block['content'] = igd_partner_coupon_pricing_block_data();
+      $block['#attributes'] = array('class' => array('empty'));
+      break;
+    }
+  return $block;
+}
+
+/**
+ *  Get data for the block
+ */
+function igd_partner_coupon_pricing_block_data() {
+  //Add all the ctools requirements for the popup
+  _add_ctools_data();
+
+  $link = ctools_modal_text_button(
+    t('View Partner'),
+    'igd_partner_coupon_pricing/partner/',
+    t('View Partner'),
+    'ctools-modal-igd_partner_coupon_pricing-style'
+  );
+
+  return $link;
+}
+
+function _add_ctools_data() {
+  ctools_add_js('igd_partner_coupon_pricing', 'igd_partner_coupon_pricing');
+  ctools_add_css('igd_partner_coupon_pricing', 'igd_partner_coupon_pricing');
+  ctools_include('ajax');
+  ctools_include('modal');
+  ctools_modal_add_js();
+
+  // Create our own javascript that will be used to theme a modal.
+  $style = array(
+    'igd_partner_coupon_pricing-style' => array(
+      'closeText' => '',
+    ),
+  );
+  drupal_add_js($style, 'setting');
+}

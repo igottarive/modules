@@ -1,0 +1,16 @@
+TODO
+  - NONE
+
+DONE
+  -Take off block if popupenabled == FALSE
+  -Run Popuptext field through token replace
+  -Add product array to dom
+  -Add coupon array to dom
+  -The "Partner" word in the orange text to the popup should be the igottadrive.com
+  -Add View Partner link (for popup and Partner Tax page) to a block and 
+  -Add a field to the partner taxonomy to enable/disable the popup
+  -JS is broken and doesn't popup onload or button press
+  -Coupon array sent to JS should be populated with real data (Drupal.settings)
+  -Product array sent to JS should be populated with real data (Drupal.settings)
+  -Put block on the partner page (if hash is there)
+  -Popup should respect the popup enabled field on the partner
